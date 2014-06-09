@@ -35,7 +35,47 @@ class MemberModel extends \Model
 
 
 	/**
-	 * Find an active member by his/her e-mail-address and username
+	 * Find an active member by their username or e-mail address
+	 *
+	 * @param string $strValue   The username or password
+	 * @param array  $arrOptions An optional options array
+	 *
+	 * @return \Model|null The model or null if there is no member
+	 *
+	 * @throws \Exception If there is more than one matching account
+	 */
+	public static function findActiveByUsernameOrEmail($strValue, array $arrOptions=array())
+	{
+		$time = time();
+		$t = static::$strTable;
+
+		// Try the e-mail address first
+		$arrColumns = array("$t.email=? AND $t.login=1 AND ($t.start='' OR $t.start<$time) AND ($t.stop='' OR $t.stop>$time) AND $t.disable=''");
+		$objCollection = static::findBy($arrColumns, array($strValue, $strValue), $arrOptions);
+
+		// Then try the username
+		if ($objCollection === null)
+		{
+			$arrColumns = array("$t.username=? AND $t.login=1 AND ($t.start='' OR $t.start<$time) AND ($t.stop='' OR $t.stop>$time) AND $t.disable=''");
+			$objCollection = static::findBy($arrColumns, array($strValue, $strValue), $arrOptions);
+		}
+
+		// Validate the result set
+		if ($objCollection === null)
+		{
+			return null;
+		}
+		elseif ($objCollection->count() > 1)
+		{
+			throw new \Exception("Found more than one account with the given username or e-mail address");
+		}
+
+		return $objCollection->current();
+	}
+
+
+	/**
+	 * Find an active member by their e-mail-address and username
 	 *
 	 * @param string $strEmail    The e-mail address
 	 * @param string $strUsername The username

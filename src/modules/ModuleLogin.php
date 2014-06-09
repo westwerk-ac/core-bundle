@@ -87,7 +87,7 @@ class ModuleLogin extends \Module
 				}
 
 				// Overwrite the jumpTo page with an individual group setting
-				$objMember = \MemberModel::findByUsername(\Input::post('username'));
+				$objMember = \MemberModel::findActiveByUsernameOrEmail(\Input::post('username'));
 
 				if ($objMember !== null)
 				{

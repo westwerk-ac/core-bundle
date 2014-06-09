@@ -233,7 +233,7 @@ abstract class User extends \System
 		}
 
 		// Load the user object
-		if ($this->findBy('username', \Input::post('username', true)) == false)
+		if ($this->findByUsernameOrEmail(\Input::post('username', true)) == false)
 		{
 			$blnLoaded = false;
 
@@ -254,7 +254,7 @@ abstract class User extends \System
 			}
 
 			// Return if the user still cannot be loaded
-			if (!$blnLoaded || $this->findBy('username', \Input::post('username', true)) == false)
+			if (!$blnLoaded || $this->findByUsernameOrEmail(\Input::post('username', true)) == false)
 			{
 				\Message::addError($GLOBALS['TL_LANG']['ERR']['invalidLogin']);
 				$this->log('Could not find user "' . \Input::post('username', true) . '"', __METHOD__, TL_ACCESS);
@@ -446,6 +446,43 @@ abstract class User extends \System
 		}
 
 		return false;
+	}
+
+
+	/**
+	 * Find a user by his username or e-mail address
+	 *
+	 * @param mixed $strValue The username or e-mail address
+	 *
+	 * @return boolean True if the user was found
+	 *
+	 * @throws \Exception If there is more than one matching account
+	 */
+	public function findByUsernameOrEmail($strValue)
+	{
+		// Try the e-mail address first
+		$objResult = $this->Database->prepare("SELECT * FROM " . $this->strTable . " WHERE email=?")
+									->execute($strValue);
+
+		// Then try the username
+		if ($objResult->numRows < 1)
+		{
+			$objResult = $this->Database->prepare("SELECT * FROM " . $this->strTable . " WHERE username=?")
+										->execute($strValue);
+		}
+
+		// Validate the result set
+		if ($objResult->numRows < 1)
+		{
+			return false;
+		}
+		elseif ($objResult->numRows > 1)
+		{
+			throw new \Exception("Found more than one account with the given username or e-mail address");
+		}
+
+		$this->arrData = $objResult->row();
+		return true;
 	}
 
 
