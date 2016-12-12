@@ -11,6 +11,8 @@
 namespace Contao;
 
 use Contao\CoreBundle\Exception\ResponseException;
+use Contao\Image\Image as ContaoImage;
+use Contao\Image\ImageDimensions;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\ResponseHeaderBag;
 
@@ -102,6 +104,12 @@ class File extends \System
 	 * @var array
 	 */
 	protected $arrImageSize = array();
+
+	/**
+	 * Image size runtime cache
+	 * @var array
+	 */
+	protected static $arrImageSizeCache = array();
 
 	/**
 	 * Image view size
@@ -240,46 +248,49 @@ class File extends \System
 			case 'imageSize':
 				if (empty($this->arrImageSize))
 				{
-					if ($this->isGdImage)
+					$strCacheKey = $this->strFile . '|' . $this->mtime;
+
+					if (isset(static::$arrImageSizeCache[$strCacheKey]))
+					{
+						$this->arrImageSize = static::$arrImageSizeCache[$strCacheKey];
+					}
+					elseif ($this->isGdImage)
 					{
 						$this->arrImageSize = @getimagesize(TL_ROOT . '/' . $this->strFile);
 					}
 					elseif ($this->isSvgImage)
 					{
-						$doc = new \DOMDocument();
-
-						if ($this->extension == 'svgz')
+						try
 						{
-							$doc->loadXML(gzdecode($this->getContent()));
-						}
-						else
-						{
-							$doc->loadXML($this->getContent());
-						}
+							$dimensions = (new ContaoImage(TL_ROOT . '/' . $this->strFile, System::getContainer()->get('contao.image.imagine_svg')))->getDimensions();
 
-						$svgElement = $doc->documentElement;
-
-						if ($svgElement->getAttribute('width') && $svgElement->getAttribute('height') && substr(rtrim($svgElement->getAttribute('width')), -1) != '%' && substr(rtrim($svgElement->getAttribute('height')), -1) != '%')
-						{
-							$this->arrImageSize = array
-							(
-								\Image::getPixelValue($svgElement->getAttribute('width')),
-								\Image::getPixelValue($svgElement->getAttribute('height'))
-							);
+							if (!$dimensions->isRelative() && !$dimensions->isUndefined())
+							{
+								$this->arrImageSize = array
+								(
+									$dimensions->getSize()->getWidth(),
+									$dimensions->getSize()->getHeight(),
+									0, // replace this with IMAGETYPE_SVG when it becomes available
+									'width="' . $dimensions->getSize()->getWidth() . '" height="' . $dimensions->getSize()->getHeight() . '"',
+									'bits' => 8,
+									'channels' => 3,
+									'mime' => $this->getMimeType()
+								);
+							}
+							else
+							{
+								$this->arrImageSize = false;
+							}
 						}
-
-						if ($this->arrImageSize && $this->arrImageSize[0] && $this->arrImageSize[1])
-						{
-							$this->arrImageSize[2] = 0; // replace this with IMAGETYPE_SVG when it becomes available
-							$this->arrImageSize[3] = 'width="' . $this->arrImageSize[0] . '" height="' . $this->arrImageSize[1] . '"';
-							$this->arrImageSize['bits'] = 8;
-							$this->arrImageSize['channels'] = 3;
-							$this->arrImageSize['mime'] = $this->getMimeType();
-						}
-						else
+						catch(\Exception $e)
 						{
 							$this->arrImageSize = false;
 						}
+					}
+
+					if (!isset(static::$arrImageSizeCache[$strCacheKey]))
+					{
+						static::$arrImageSizeCache[$strCacheKey] = $this->arrImageSize;
 					}
 				}
 				return $this->arrImageSize;
@@ -306,31 +317,27 @@ class File extends \System
 					}
 					elseif ($this->isSvgImage)
 					{
-						$doc = new \DOMDocument();
-
-						if ($this->extension == 'svgz')
+						try
 						{
-							$doc->loadXML(gzdecode($this->getContent()));
-						}
-						else
-						{
-							$doc->loadXML($this->getContent());
-						}
-
-						$svgElement = $doc->documentElement;
-
-						if ($svgElement->getAttribute('viewBox'))
-						{
-							$svgViewBox = preg_split('/[\s,]+/', $svgElement->getAttribute('viewBox'));
+							$dimensions = new ImageDimensions(
+								System::getContainer()
+									->get('contao.image.imagine_svg')
+									->open(TL_ROOT . '/' . $this->strFile)
+									->getSize()
+							);
 
 							$this->arrImageViewSize = array
 							(
-								intval($svgViewBox[2]),
-								intval($svgViewBox[3])
+								intval($dimensions->getSize()->getWidth()),
+								intval($dimensions->getSize()->getHeight())
 							);
-						}
 
-						if (!$this->arrImageViewSize || !$this->arrImageViewSize[0] || !$this->arrImageViewSize[1])
+							if (!$this->arrImageViewSize[0] || !$this->arrImageViewSize[1])
+							{
+								$this->arrImageViewSize = false;
+							}
+						}
+						catch(\Exception $e)
 						{
 							$this->arrImageViewSize = false;
 						}
@@ -617,7 +624,7 @@ class File extends \System
 	 */
 	public static function putContent($strFile, $strContent)
 	{
-		$objFile = new static($strFile, true);
+		$objFile = new static($strFile);
 		$objFile->write($strContent);
 		$objFile->close();
 	}
@@ -736,7 +743,11 @@ class File extends \System
 			return false;
 		}
 
-		$return = \Image::resize($this->strFile, $width, $height, $mode);
+		$return = \System::getContainer()
+			->get('contao.image.image_factory')
+			->create(TL_ROOT . '/' . $this->strFile, array($width, $height, $mode), TL_ROOT . '/' . $this->strFile)
+			->getUrl(TL_ROOT)
+		;
 
 		if ($return)
 		{

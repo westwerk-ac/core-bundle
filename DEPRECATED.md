@@ -1,6 +1,68 @@
 Deprecated features
 ===================
 
+### Image service
+
+The `Image` and `Picture` classes have been deprecated in favor of the image
+service. Here are two examples of how to use the service:
+
+```php
+// Old syntax
+$image = Image::get($objSubfiles->path, 80, 60, 'center_center');
+
+// New syntax
+$container = System::getContainer();
+$rootDir = dirname($container->getParameter('kernel.root_dir'));
+
+$image = $container
+    ->get('contao.image.image_factory')
+    ->create($rootDir.'/'.$objSubfiles->path, [80, 60, 'center_center'])
+    ->getUrl($rootDir)
+;
+```
+
+```php
+// Old syntax
+$image = Image::create($path, [400, 50, 'box'])
+    ->executeResize()
+    ->getResizedPath()
+;
+
+// New syntax
+$container = System::getContainer();
+$rootDir = dirname($container->getParameter('kernel.root_dir'));
+
+$image = $container
+    ->get('contao.image.image_factory')
+    ->create(
+        $rootDir.'/'.$path,
+        (new ResizeConfiguration())
+            ->setWidth(400)
+            ->setHeight(50)
+            ->setMode(ResizeConfiguration::MODE_BOX)
+    )
+    ->getUrl($rootDir)
+;
+```
+
+For more information see: https://github.com/contao/image/blob/master/README.md
+
+
+### FORM_FIELDS
+
+Using the `FORM_FIELDS` mechanism to determine which form fields have been
+submitted has been deprecated in Contao 4.0 and will no longer work in Contao
+5.0. Make sure to always submit at least an empty string in your widget.
+
+```html
+<!-- Wrong: the input will only be submitted if checked -->
+<input type="checkbox" name="foo" value="bar">
+
+<!-- Right: the input will always be submitted -->
+<input type="hidden" name="foo" value=""><input type="checkbox" name="foo" value="bar">
+```
+
+
 ### Page handler without getResponse()
 
 Using a custom page handler without a `getResponse()` method has been

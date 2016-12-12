@@ -13,8 +13,11 @@ namespace Contao\CoreBundle\Test\Routing;
 use Contao\CoreBundle\Framework\Adapter;
 use Contao\CoreBundle\Routing\UrlGenerator;
 use Contao\CoreBundle\Test\TestCase;
+use Symfony\Component\Routing\Generator\UrlGenerator as ParentUrlGenerator;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Routing\RequestContext;
+use Symfony\Component\Routing\Route;
+use Symfony\Component\Routing\RouteCollection;
 
 /**
  * Tests the UrlGenerator class.
@@ -37,6 +40,23 @@ class UrlGeneratorTest extends TestCase
     public function testInstantiation()
     {
         $this->assertInstanceOf('Contao\CoreBundle\Routing\UrlGenerator', $this->getGenerator());
+    }
+
+    /**
+     * Tests the setContext() method.
+     */
+    public function testSetContext()
+    {
+        $generator = new UrlGenerator(
+            new ParentUrlGenerator(new RouteCollection(), new RequestContext()),
+            $this->mockContaoFramework(),
+            false
+        );
+
+        $context = new RequestContext();
+        $generator->setContext($context);
+
+        $this->assertSame($context, $generator->getContext());
     }
 
     /**
@@ -71,7 +91,11 @@ class UrlGeneratorTest extends TestCase
         $this->assertEquals('contao_frontend', $this->getGenerator(false, 0)->generate('index/foobar'));
         $this->assertArrayHasKey('alias', $this->getGenerator()->generate('index/foobar'));
 
-        $this->assertEquals('contao_frontend', $this->getGenerator(false, 0)->generate('index/{foo}', ['foo' => 'bar']));
+        $this->assertEquals(
+            'contao_frontend',
+            $this->getGenerator(false, 0)->generate('index/{foo}', ['foo' => 'bar'])
+        );
+
         $this->assertArrayHasKey('alias', $this->getGenerator()->generate('index/{foo}', ['foo' => 'bar']));
         $this->assertEquals('index/foo/bar', $this->getGenerator()->generate('index/{foo}', ['foo' => 'bar'])['alias']);
     }
@@ -201,6 +225,87 @@ class UrlGeneratorTest extends TestCase
     }
 
     /**
+     * Tests setting the context from a domain.
+     */
+    public function testSetContextFromDomain()
+    {
+        $routes = new RouteCollection();
+        $routes->add('contao_index', new Route('/'));
+
+        $generator = new UrlGenerator(
+            new ParentUrlGenerator($routes, new RequestContext()),
+            $this->mockContaoFramework(),
+            false
+        );
+
+        $this->assertEquals(
+            'https://contao.org/',
+            $generator->generate(
+                'index',
+                ['_domain' => 'contao.org:443', '_ssl' => true],
+                UrlGeneratorInterface::ABSOLUTE_URL
+           )
+        );
+
+        $this->assertEquals(
+            'http://contao.org/',
+            $generator->generate(
+                'index',
+                ['_domain' => 'contao.org'],
+                UrlGeneratorInterface::ABSOLUTE_URL
+           )
+        );
+
+        $this->assertEquals(
+            'http://contao.org/',
+            $generator->generate(
+                'index',
+                ['_domain' => 'contao.org:80'],
+                UrlGeneratorInterface::ABSOLUTE_URL
+           )
+        );
+    }
+
+    /**
+     * Tests that the context is not modified if the hostname is set.
+     *
+     * To tests this case, we omit the _ssl parameter and set the scheme to "https" in the context. If the
+     * generator still returns a HTTPS URL, we know that the context has not been modified.
+     */
+    public function testContextNotModifiedIfHostnameIsSet()
+    {
+        $routes = new RouteCollection();
+        $routes->add('contao_index', new Route('/'));
+
+        $context = new RequestContext();
+        $context->setHost('contao.org');
+        $context->setScheme('https');
+
+        $generator = new UrlGenerator(
+            new ParentUrlGenerator($routes, $context),
+            $this->mockContaoFramework(),
+            false
+        );
+
+        $this->assertEquals(
+            'https://contao.org/',
+            $generator->generate(
+                'index',
+                ['_domain' => 'contao.org'],
+                UrlGeneratorInterface::ABSOLUTE_URL
+           )
+        );
+    }
+
+    /**
+     * Tests the generator with non-array parameters.
+     */
+    public function testWithNonArrayParameters()
+    {
+        $this->assertEquals('foo', $this->getGenerator()->generate('foo', 'bar')['alias']);
+    }
+
+    /**
      * Returns an UrlGenerator object.
      *
      * @param bool $prependLocale
@@ -255,7 +360,18 @@ class UrlGeneratorTest extends TestCase
         $configAdapter
             ->expects($this->any())
             ->method('get')
-            ->willReturn($useAutoItem)
+            ->willReturnCallback(function ($key) use ($useAutoItem) {
+                switch ($key) {
+                    case 'useAutoItem':
+                        return $useAutoItem;
+
+                    case 'timeZone':
+                        return 'Europe/Berlin';
+
+                    default:
+                        return null;
+                }
+            })
         ;
 
         return new UrlGenerator(

@@ -23,8 +23,6 @@ use Contao\CoreBundle\Exception\AccessDeniedException;
  * @property string  $inputName
  * @property string  $palette
  * @property object  $activeRecord
- * @property boolean $blnUploadable
- * @property array   $root
  * @property array   $rootIds
  *
  * @author Leo Feyer <https://github.com/leofeyer>
@@ -69,6 +67,12 @@ abstract class DataContainer extends \Backend
 	protected $strPalette;
 
 	/**
+	 * IDs of all root records
+	 * @var array
+	 */
+	protected $root;
+
+	/**
 	 * WHERE clause of the database query
 	 * @var array
 	 */
@@ -97,6 +101,12 @@ abstract class DataContainer extends \Backend
 	 * @var Model|FilesModel
 	 */
 	protected $objActiveRecord;
+
+	/**
+	 * True if one of the form fields is uploadable
+	 * @var boolean
+	 */
+	protected $blnUploadable = false;
 
 
 	/**
@@ -272,7 +282,8 @@ abstract class DataContainer extends \Backend
 		// Validate the field
 		if (\Input::post('FORM_SUBMIT') == $this->strTable)
 		{
-			$key = (\Input::get('act') == 'editAll') ? 'FORM_FIELDS_' . $this->intId : 'FORM_FIELDS';
+			$suffix = ($this instanceof DC_Folder ? md5($this->intId) : $this->intId);
+			$key = (\Input::get('act') == 'editAll') ? 'FORM_FIELDS_' . $suffix : 'FORM_FIELDS';
 
 			// Calculate the current palette
 			$postPaletteFields = implode(',', \Input::post($key));
@@ -304,17 +315,23 @@ abstract class DataContainer extends \Backend
 			{
 				foreach ($newPaletteFields as $k=>$v)
 				{
-					$newPaletteFields[$k] = $v . '_' . $this->intId;
+					$newPaletteFields[$k] = $v . '_' . $suffix;
 				}
 
 				if ($this->User->isAdmin)
 				{
-					$newPaletteFields['pid'] = 'pid_' . $this->intId;
-					$newPaletteFields['sorting'] = 'sorting_' . $this->intId;
+					$newPaletteFields['pid'] = 'pid_' . $suffix;
+					$newPaletteFields['sorting'] = 'sorting_' . $suffix;
 				}
 			}
 
 			$paletteFields = array_intersect($postPaletteFields, $newPaletteFields);
+
+			// Deprecated since Contao 4.2, to be removed in Contao 5.0
+			if (!isset($_POST[$this->strInputName]) && in_array($this->strInputName, $paletteFields))
+			{
+				@trigger_error('Using FORM_FIELDS has been deprecated and will no longer work in Contao 5.0. Make sure to always submit at least an empty string in your widget.', E_USER_DEPRECATED);
+			}
 
 			// Validate and save the field
 			if (in_array($this->strInputName, $paletteFields) || \Input::get('act') == 'overrideAll')
@@ -447,6 +464,11 @@ abstract class DataContainer extends \Backend
 			$this->blnUploadable = true;
 		}
 
+		if ($arrData['inputType'] != 'password')
+		{
+			$arrData['eval']['tl_class'] .= ' widget';
+		}
+
 		// Mark floated single checkboxes
 		if ($arrData['inputType'] == 'checkbox' && !$arrData['eval']['multiple'] && strpos($arrData['eval']['tl_class'], 'w50') !== false)
 		{
@@ -457,12 +479,6 @@ abstract class DataContainer extends \Backend
 			$arrData['eval']['tl_class'] .= ' inline';
 		}
 
-		// No 2-column layout in "edit all" mode
-		if (\Input::get('act') == 'editAll' || \Input::get('act') == 'overrideAll')
-		{
-			$arrData['eval']['tl_class'] = str_replace(array('w50', 'clr', 'wizard', 'long', 'm12', 'cbx'), '', $arrData['eval']['tl_class']);
-		}
-
 		$updateMode = '';
 
 		// Replace the textarea with an RTE instance
@@ -471,8 +487,9 @@ abstract class DataContainer extends \Backend
 			list ($file, $type) = explode('|', $arrData['eval']['rte'], 2);
 
 			/** @var BackendTemplate|object $objTemplate */
-			$objTemplate = new \BackendTemplate("be_$file");
+			$objTemplate = new \BackendTemplate('be_' . $file);
 			$objTemplate->selector = 'ctrl_' . $this->strInputName;
+			$objTemplate->type = $type;
 
 			// Deprecated since Contao 4.0, to be removed in Contao 5.0
 			$objTemplate->language = \Backend::getTinyMceLanguage();
@@ -487,7 +504,7 @@ abstract class DataContainer extends \Backend
 		{
 			$updateMode = '
 </div>
-<div>
+<div class="widget">
   <fieldset class="tl_radio_container">
   <legend>' . $GLOBALS['TL_LANG']['MSC']['updateMode'] . '</legend>
     <input type="radio" name="'.$this->strInputName.'_update" id="opt_'.$this->strInputName.'_update_1" class="tl_radio" value="add" onfocus="Backend.getScrollOffset()"> <label for="opt_'.$this->strInputName.'_update_1">' . $GLOBALS['TL_LANG']['MSC']['updateAdd'] . '</label><br>
@@ -511,7 +528,7 @@ abstract class DataContainer extends \Backend
 				{
 					if ($objFile->width > 699 || $objFile->height > 524 || !$objFile->width || !$objFile->height)
 					{
-						$image = rawurldecode(\Image::get($objFile->path, 699, 524, 'box'));
+						$image = rawurldecode(\System::getContainer()->get('contao.image.image_factory')->create(TL_ROOT . '/' . $objFile->path, array(699, 524, 'box'))->getUrl(TL_ROOT));
 					}
 					else
 					{
@@ -537,12 +554,14 @@ abstract class DataContainer extends \Backend
 					{
 						$strPreview .= '<p class="tl_help tl_tip">' . $GLOBALS['TL_LANG'][$this->strTable]['edit_preview_help'] . '</p>';
 					}
+
+					$strPreview = '<div class="widget">' . $strPreview . '</div>';
 				}
 			}
 		}
 
 		return $strPreview . '
-<div' . ($arrData['eval']['tl_class'] ? ' class="' . $arrData['eval']['tl_class'] . '"' : '') . '>' . $objWidget->parse() . $updateMode . (!$objWidget->hasErrors() ? $this->help($strHelpClass) : '') . '
+<div' . ($arrData['eval']['tl_class'] ? ' class="' . trim($arrData['eval']['tl_class']) . '"' : '') . '>' . $objWidget->parse() . $updateMode . (!$objWidget->hasErrors() ? $this->help($strHelpClass) : '') . '
 </div>';
 	}
 
@@ -686,7 +705,7 @@ abstract class DataContainer extends \Backend
 				}
 				else
 				{
-					$return .= '<a href="'.$this->addToUrl($v['href'].'&amp;id='.$arrRow['id']).'" title="'.\StringUtil::specialchars($title).'"'.$attributes.'>'.\Image::getHtml($v['icon'], $label).'</a> ';
+					$return .= '<a href="'.$this->addToUrl($v['href'].'&amp;id='.$arrRow['id'].(\Input::get('nb') ? '&amp;nc=1' : '')).'" title="'.\StringUtil::specialchars($title).'"'.$attributes.'>'.\Image::getHtml($v['icon'], $label).'</a> ';
 				}
 
 				continue;
@@ -706,10 +725,11 @@ abstract class DataContainer extends \Backend
 				if ($dir == 'up')
 				{
 					$return .= ((is_numeric($strPrevious) && (!in_array($arrRow['id'], $arrRootIds) || empty($GLOBALS['TL_DCA'][$strTable]['list']['sorting']['root']))) ? '<a href="'.$this->addToUrl($href.'&amp;id='.$arrRow['id']).'&amp;sid='.intval($strPrevious).'" title="'.\StringUtil::specialchars($title).'"'.$attributes.'>'.$label.'</a> ' : \Image::getHtml('up_.svg')).' ';
-					continue;
 				}
-
-				$return .= ((is_numeric($strNext) && (!in_array($arrRow['id'], $arrRootIds) || empty($GLOBALS['TL_DCA'][$strTable]['list']['sorting']['root']))) ? '<a href="'.$this->addToUrl($href.'&amp;id='.$arrRow['id']).'&amp;sid='.intval($strNext).'" title="'.\StringUtil::specialchars($title).'"'.$attributes.'>'.$label.'</a> ' : \Image::getHtml('down_.svg')).' ';
+				else
+				{
+					$return .= ((is_numeric($strNext) && (!in_array($arrRow['id'], $arrRootIds) || empty($GLOBALS['TL_DCA'][$strTable]['list']['sorting']['root']))) ? '<a href="'.$this->addToUrl($href.'&amp;id='.$arrRow['id']).'&amp;sid='.intval($strNext).'" title="'.\StringUtil::specialchars($title).'"'.$attributes.'>'.$label.'</a> ' : \Image::getHtml('down_.svg')).' ';
+				}
 			}
 		}
 
